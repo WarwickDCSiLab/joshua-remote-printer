@@ -1,0 +1,98 @@
+#!/bin/bash
+
+# A POSIX variable
+OPTIND=1         # Reset in case getopts has been used previously in the shell.
+
+# Defaults
+user="${JOSHUA_USER}"
+printer="dcs006a"
+host="joshua.dcs.warwick.ac.uk"
+
+function show_help {
+    echo -e "\nJoshua Line Printer (TM)\n---------------------------------------\n"
+    echo -e "USAGE: jlp [OPTIONS] [FILES]\n"
+    echo -e "OPTIONS\n-------"
+    echo -e "-h:\t  HELP - Displays this usage message"
+    echo -e "-l:\t  LIST - List available printers on remote host"
+    echo -e "-u:\t  USER - Username used to connect to remote host (Default \$JOSHUA_USER environment variable)"
+    echo -e "-p:\t  PRNT - Name of printer to print to (Default \"dcs006a\")"
+    echo -e "-r:\t  HOST - Remote host address (Default \"joshua.dcs.warwick.ac.uk\")"
+    echo -e ""
+    exit 0
+}
+
+function get_printers {
+    echo -e $(ssh $user@$host "lpq -a | grep dcs | cut -d\  -f1")
+}
+
+
+
+while getopts "hlu:p:r:" opt; do
+    case "$opt" in
+    h)  show_help
+        ;;
+    l)  list_printers=true
+        ;;
+    u)  user=$OPTARG
+        ;;
+    p)  printer=$OPTARG
+        ;;
+    r)  host=$OPTARG
+        ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+[ "$1" = "--" ] && shift
+
+# List available printers and exit
+if [ $list_printers ]; then
+    echo -e "Listing available printers..."
+    printers=$(get_printers)
+    for p in $printers; do
+        echo $p
+    done
+    exit 0
+fi
+
+# If no files then show help and exit
+if [ $# -eq 0 ]; then
+    show_help
+fi
+
+# Upload the files to host and print
+for file in "$@"; do
+    if [ -f "$file" ]; then
+        filename=$(basename "$file")
+
+        if [[ "$(file --brief $file)" != "PDF document"* ]]; then
+            echo -e "$file is not a PDF document. Skipping..."
+            break
+        fi
+        echo -e -n "Sending $filename to server...\t"
+
+        pdftops $file - | ssh $user@$host "lp -s -d $printer -t $filename"
+
+        # Check if file was sent
+        if [ $? ]; then
+            echo -e "SUCCESS"
+        else
+            echo -e "FAIL\nCould not send file to server. Exiting..."
+            exit 2
+        fi
+
+    else
+        echo -e "Could not find ${file}, ignoring..."
+    fi
+done
+
+# Show print queue while documents are in it
+ssh $user@$host "
+while [[ \$(grep 'no entries' <(lpq -P $printer $user)) == '' ]]; do
+    lpq -P $printer $user
+    echo
+    sleep 10
+done"
+
+echo -e "Finished printing."
